@@ -68,10 +68,27 @@ def get_route(start, end):
     except Exception:
         return None
 
+# Helper to format decimal hours to HH:MM format
+def format_time(decimal_hours):
+    hours = int(decimal_hours)
+    minutes = int(round((decimal_hours - hours) * 60))
+    if minutes == 60:
+        hours += 1
+        minutes = 0
+    period = "AM"
+    if hours >= 12:
+        period = "PM"
+    display_hours = hours
+    if hours > 12:
+        display_hours -= 12
+    elif hours == 0:
+        display_hours = 12
+    return f"{display_hours:02d}:{minutes:02d} {period}"
+
 # -----------------------------------
-# REALISTIC HOS SIMULATION ENGINE
+# ASSESSMENT COMPLIANT HOS SIMULATION
 # -----------------------------------
-def calculate_hos(total_driving_hours, initial_cycle_used):
+def calculate_hos_advanced(current_location, pickup_location, dropoff_location, d1, t1, d2, t2, initial_cycle_used):
     DAILY_DRIVING_LIMIT = 11.0
     DAILY_DUTY_LIMIT = 14.0
     CYCLE_LIMIT = 70.0
@@ -80,124 +97,297 @@ def calculate_hos(total_driving_hours, initial_cycle_used):
     OFF_DUTY_REST = 10.0
     RESTART_REST = 34.0
     
-    remaining_driving = total_driving_hours
-    remaining_cycle = max(0.0, CYCLE_LIMIT - initial_cycle_used)
+    # 1. Compile events queue
+    events = []
+    
+    # Pre-trip at origin
+    events.append({
+        "type": "ON_DUTY",
+        "hours": 0.5,
+        "reason": "Pre-trip Inspection",
+        "location": current_location
+    })
+    
+    # Drive leg 1 (Current to Pickup)
+    speed1 = d1 / t1 if t1 > 0 else 55.0
+    rem_d1 = d1
+    odometer = 0.0 # odometer since last fuel stop
+    
+    while rem_d1 > 0:
+        dist_to_fuel = 1000.0 - odometer
+        if rem_d1 <= dist_to_fuel:
+            drive_hrs = rem_d1 / speed1
+            events.append({
+                "type": "DRIVE",
+                "hours": drive_hrs,
+                "miles": rem_d1,
+                "start_loc": current_location,
+                "end_loc": pickup_location
+            })
+            odometer += rem_d1
+            rem_d1 = 0
+        else:
+            # Drive to fueling stop
+            events.append({
+                "type": "DRIVE",
+                "hours": dist_to_fuel / speed1,
+                "miles": dist_to_fuel,
+                "start_loc": current_location,
+                "end_loc": "Fuel Station"
+            })
+            events.append({
+                "type": "ON_DUTY",
+                "hours": 0.5,
+                "reason": "Fueling Stop & Inspection",
+                "location": "Fuel Station"
+            })
+            odometer = 0.0
+            rem_d1 -= dist_to_fuel
+
+    # Pickup stop - 1 hour on duty loading (from PDF instructions)
+    events.append({
+        "type": "ON_DUTY",
+        "hours": 1.0,
+        "reason": "Pickup & Loading (Stop)",
+        "location": pickup_location
+    })
+
+    # Drive leg 2 (Pickup to Dropoff)
+    speed2 = d2 / t2 if t2 > 0 else 55.0
+    rem_d2 = d2
+    while rem_d2 > 0:
+        dist_to_fuel = 1000.0 - odometer
+        if rem_d2 <= dist_to_fuel:
+            drive_hrs = rem_d2 / speed2
+            events.append({
+                "type": "DRIVE",
+                "hours": drive_hrs,
+                "miles": rem_d2,
+                "start_loc": pickup_location,
+                "end_loc": dropoff_location
+            })
+            odometer += rem_d2
+            rem_d2 = 0
+        else:
+            events.append({
+                "type": "DRIVE",
+                "hours": dist_to_fuel / speed2,
+                "miles": dist_to_fuel,
+                "start_loc": pickup_location,
+                "end_loc": "Fuel Station"
+            })
+            events.append({
+                "type": "ON_DUTY",
+                "hours": 0.5,
+                "reason": "Fueling Stop & Inspection",
+                "location": "Fuel Station"
+            })
+            odometer = 0.0
+            rem_d2 -= dist_to_fuel
+
+    # Dropoff stop - 1 hour on duty unloading (from PDF instructions)
+    events.append({
+        "type": "ON_DUTY",
+        "hours": 1.0,
+        "reason": "Dropoff & Unloading (Stop)",
+        "location": dropoff_location
+    })
+
+    # Post-trip inspection at destination
+    events.append({
+        "type": "ON_DUTY",
+        "hours": 0.5,
+        "reason": "Post-trip Inspection",
+        "location": dropoff_location
+    })
+
+    # 2. Simulate daily operations
     daily_schedule = []
     day_counter = 1
-    total_restart_hours = 0
-    total_breaks_taken = 0
+    cycle_remaining = max(0.0, CYCLE_LIMIT - initial_cycle_used)
     
-    while remaining_driving > 0:
-        # Check if we need a restart before driving today
-        # We need at least some hours on cycle to drive. If cycle remaining is critically low (e.g. <= 2.0 hrs)
-        # and we still have substantial driving to do, trigger a 34h restart.
-        if remaining_cycle <= 2.0 and remaining_driving > 0:
+    # Maintain rolling daily duty log for recap table (previous 7 days initialization)
+    # We distribute initial_cycle_used over the past 7 days to simulate a realistic starting cycle history.
+    daily_duty_history = [round(initial_cycle_used / 7, 1)] * 7
+
+    event_index = 0
+    while event_index < len(events):
+        # Check if cycle limit is exhausted (need 34h restart)
+        # If we have less than 2 hours left in cycle, force a 34h restart day
+        if cycle_remaining <= 2.0:
             daily_schedule.append({
                 "day": day_counter,
                 "type": "RESTART",
                 "status": "34-Hour Restart",
                 "drivingHours": 0.0,
                 "onDutyHours": 0.0,
-                "offDutyHours": RESTART_REST,
+                "offDutyHours": 24.0,
                 "breakHours": 0.0,
-                "message": "Cycle hours depleted. Mandatory 34-hour restart taken to reset cycle.",
+                "milesDriven": 0.0,
+                "message": "Rolling 70-hour cycle limit reached. 34-hour restart taken to reset cycle hours.",
                 "eldLog": {
-                    "offDutyHours": 18.0,
-                    "sleeperHours": 16.0,
+                    "offDutyHours": 12.0,
+                    "sleeperHours": 12.0,
                     "drivingHours": 0.0,
                     "breakHours": 0.0,
                     "onDutyHours": 0.0,
                     "intervals": [
-                        {"status": "OFF", "start": 0, "end": 12, "duration": 12},
-                        {"status": "SB", "start": 12, "end": 24, "duration": 12}
-                    ]
+                        {"status": "OFF", "start": 0.0, "end": 12.0, "duration": 12.0},
+                        {"status": "SB", "start": 12.0, "end": 24.0, "duration": 12.0}
+                    ],
+                    "remarks": [
+                        "06:00 AM - Initiated mandatory 34-hour restart rest window"
+                    ],
+                    "recap": {
+                        "onDutyToday": 0.0,
+                        "rolling7DaysTotal": 0.0,
+                        "availableTomorrow": 70.0
+                    }
                 }
             })
-            remaining_cycle = CYCLE_LIMIT
-            total_restart_hours += RESTART_REST
+            cycle_remaining = CYCLE_LIMIT
+            daily_duty_history.append(0.0)
             day_counter += 1
             continue
 
-        # Decide driving hours for today
-        # Must fit within daily limit, remaining driving, and remaining cycle (minus 1h inspect)
-        on_duty_inspect = 1.0
-        max_possible_driving = min(DAILY_DRIVING_LIMIT, remaining_driving)
+        # Simulate standard work day
+        # Shift starts at 06:00 AM (Hour 6.0) and ends at 08:00 PM (Hour 20.0) - max 14 hours
+        shift_elapsed = 0.0
+        driving_today = 0.0
+        on_duty_today = 0.0
+        break_today = 0.0
+        miles_today = 0.0
         
-        # Adjust driving if cycle is limiting
-        if max_possible_driving + on_duty_inspect > remaining_cycle:
-            # Drive whatever is left of cycle minus inspection, or cycle itself if very small
-            max_possible_driving = max(0.0, remaining_cycle - on_duty_inspect)
-            if max_possible_driving == 0.0:
-                # Force restart
-                remaining_cycle = 0.0
-                continue
-
-        driving_today = round(min(max_possible_driving, remaining_driving), 1)
-        
-        # Break check: if driving >= 8 hours, 30 min break required
-        break_today = BREAK_DURATION if driving_today >= BREAK_DRIVING_LIMIT else 0.0
-        if break_today > 0:
-            total_breaks_taken += 1
-
-        on_duty_today = on_duty_inspect
-        off_duty_today = round(24.0 - driving_today - on_duty_today - break_today, 1)
-
-        # Split off duty into Off Duty and Sleeper Berth for realistic ELD visualization
-        sleeper_today = round(min(10.0, off_duty_today * 0.7), 1)
-        pure_off_duty = round(off_duty_today - sleeper_today, 1)
-
-        # Generate ELD Timeline Intervals
+        remarks = []
         intervals = []
-        # Day starts with rest (e.g. sleeper / off duty)
-        start_time = 0.0
         
-        # 1. Morning rest (Sleeper)
-        if sleeper_today > 0:
-            intervals.append({"status": "SB", "start": start_time, "end": start_time + sleeper_today, "duration": sleeper_today})
-            start_time += sleeper_today
-        
-        # 2. Pre-trip inspection (On Duty)
-        if on_duty_today > 0:
-            inspect_dur = on_duty_today * 0.5
-            intervals.append({"status": "ON", "start": start_time, "end": start_time + inspect_dur, "duration": inspect_dur})
-            start_time += inspect_dur
+        # 1. Morning Off Duty/Sleeper rest (00:00 to 06:00 = 6 hours)
+        intervals.append({"status": "SB", "start": 0.0, "end": 6.0, "duration": 6.0})
+        remarks.append("12:00 AM - Midnight Rest in Sleeper Berth")
 
-        # 3. Driving segment 1
-        drive_seg1 = round(min(4.0, driving_today), 1)
-        if drive_seg1 > 0:
-            intervals.append({"status": "D", "start": start_time, "end": start_time + drive_seg1, "duration": drive_seg1})
-            start_time += drive_seg1
+        driving_since_break = 0.0
+
+        # Process shift window
+        while shift_elapsed < DAILY_DUTY_LIMIT and event_index < len(events):
+            event = events[event_index]
             
-        # 4. Required Break
-        if break_today > 0:
-            intervals.append({"status": "OFF", "start": start_time, "end": start_time + break_today, "duration": break_today})
-            start_time += break_today
+            # Check limits
+            limit_11 = DAILY_DRIVING_LIMIT - driving_today
+            limit_14 = DAILY_DUTY_LIMIT - shift_elapsed
+            limit_70 = cycle_remaining
+            
+            if event["type"] == "ON_DUTY":
+                rem_h = event["hours"]
+                fit_h = min(rem_h, limit_14, limit_70)
+                
+                if fit_h > 0:
+                    start_time_dec = 6.0 + shift_elapsed
+                    remarks.append(f"{format_time(start_time_dec)} - {event['reason']} at {event['location']}")
+                    
+                    on_duty_today += fit_h
+                    shift_elapsed += fit_h
+                    cycle_remaining -= fit_h
+                    
+                    intervals.append({"status": "ON", "start": start_time_dec, "end": start_time_dec + fit_h, "duration": fit_h})
+                    
+                    event["hours"] -= fit_h
+                    if event["hours"] <= 0:
+                        event_index += 1
+                else:
+                    break # Shift window or cycle limit hit
+                    
+            elif event["type"] == "DRIVE":
+                rem_h = event["hours"]
+                limit_8 = BREAK_DRIVING_LIMIT - driving_since_break
+                max_drive = min(rem_h, limit_11, limit_14, limit_70, limit_8)
+                
+                if max_drive > 0:
+                    start_time_dec = 6.0 + shift_elapsed
+                    remarks.append(f"{format_time(start_time_dec)} - Driving from {event['start_loc']} to {event['end_loc']}")
+                    
+                    driving_today += max_drive
+                    shift_elapsed += max_drive
+                    cycle_remaining -= max_drive
+                    driving_since_break += max_drive
+                    
+                    # Calculate proportional miles driven today
+                    leg_speed = event["miles"] / event["hours"] if event["hours"] > 0 else 55.0
+                    drive_miles = max_drive * leg_speed
+                    miles_today += drive_miles
+                    
+                    intervals.append({"status": "D", "start": start_time_dec, "end": start_time_dec + max_drive, "duration": max_drive})
+                    
+                    event["hours"] -= max_drive
+                    event["miles"] -= drive_miles
+                    if event["hours"] <= 0:
+                        event_index += 1
+                        
+                    # Check if 30-min break is triggered
+                    if driving_since_break >= BREAK_DRIVING_LIMIT and shift_elapsed < DAILY_DUTY_LIMIT:
+                        break_start = 6.0 + shift_elapsed
+                        remarks.append(f"{format_time(break_start)} - Mandatory 30-minute Rest Break")
+                        
+                        break_today += BREAK_DURATION
+                        shift_elapsed += BREAK_DURATION
+                        driving_since_break = 0.0
+                        
+                        intervals.append({"status": "OFF", "start": break_start, "end": break_start + BREAK_DURATION, "duration": BREAK_DURATION})
+                else:
+                    if limit_8 <= 0:
+                        # Force rest break
+                        break_start = 6.0 + shift_elapsed
+                        remarks.append(f"{format_time(break_start)} - Mandatory 30-minute Rest Break")
+                        
+                        break_today += BREAK_DURATION
+                        shift_elapsed += BREAK_DURATION
+                        driving_since_break = 0.0
+                        
+                        intervals.append({"status": "OFF", "start": break_start, "end": break_start + BREAK_DURATION, "duration": BREAK_DURATION})
+                    else:
+                        break # Daily limit reached
 
-        # 5. Driving segment 2
-        drive_seg2 = round(driving_today - drive_seg1, 1)
-        if drive_seg2 > 0:
-            intervals.append({"status": "D", "start": start_time, "end": start_time + drive_seg2, "duration": drive_seg2})
-            start_time += drive_seg2
-
-        # 6. Post-trip inspection (On duty remaining)
-        if on_duty_today > 0:
-            inspect_dur = on_duty_today * 0.5
-            intervals.append({"status": "ON", "start": start_time, "end": start_time + inspect_dur, "duration": inspect_dur})
-            start_time += inspect_dur
-
-        # 7. Remaining evening off duty
-        end_rest = round(24.0 - start_time, 1)
-        if end_rest > 0:
-            intervals.append({"status": "OFF", "start": start_time, "end": start_time + end_rest, "duration": end_rest})
-
-        eld_log = {
-            "offDutyHours": pure_off_duty,
-            "sleeperHours": sleeper_today,
-            "drivingHours": driving_today,
-            "breakHours": break_today,
-            "onDutyHours": on_duty_today,
-            "intervals": intervals
-        }
+        # End of shift rest (10 consecutive hours off duty)
+        shift_end = 6.0 + shift_elapsed
+        if shift_end < 24.0:
+            rem_day_rest = 24.0 - shift_end
+            intervals.append({"status": "OFF", "start": shift_end, "end": 24.0, "duration": rem_day_rest})
+            remarks.append(f"{format_time(shift_end)} - Shift completed. Released for Off-Duty Rest.")
+        
+        # Calculate totals
+        off_duty_today = break_today
+        sleeper_today = 6.0 # morning rest
+        
+        # Split evening rest between off duty and sleeper
+        evening_rest = 24.0 - shift_end
+        if evening_rest > 0:
+            sleeper_today += evening_rest * 0.5
+            off_duty_today += evening_rest * 0.5
+            
+        driving_today = round(driving_today, 1)
+        on_duty_today = round(on_duty_today, 1)
+        off_duty_today = round(off_duty_today, 1)
+        sleeper_today = round(sleeper_today, 1)
+        
+        # Consolidation of duplicate consecutive intervals to keep graph path drawing clean
+        consolidated = []
+        for interval in sorted(intervals, key=lambda x: x["start"]):
+            if len(consolidated) == 0:
+                consolidated.append(interval)
+            else:
+                last = consolidated[-1]
+                if last["status"] == interval["status"] and abs(last["end"] - interval["start"]) < 0.01:
+                    last["end"] = interval["end"]
+                    last["duration"] = round(last["end"] - last["start"], 1)
+                else:
+                    consolidated.append(interval)
+                    
+        # Recap calculations
+        duty_today = driving_today + on_duty_today
+        daily_duty_history.append(duty_today)
+        
+        # Rolling 7 days total (previous 7 days from history list)
+        rolling_7 = sum(daily_duty_history[-7:])
+        available_tomorrow = max(0.0, 70.0 - rolling_7)
 
         daily_schedule.append({
             "day": day_counter,
@@ -207,23 +397,36 @@ def calculate_hos(total_driving_hours, initial_cycle_used):
             "onDutyHours": on_duty_today,
             "offDutyHours": off_duty_today,
             "breakHours": break_today,
-            "eldLog": eld_log
+            "milesDriven": round(miles_today, 1),
+            "eldLog": {
+                "offDutyHours": off_duty_today,
+                "sleeperHours": sleeper_today,
+                "drivingHours": driving_today,
+                "breakHours": break_today,
+                "onDutyHours": on_duty_today,
+                "intervals": consolidated,
+                "remarks": remarks,
+                "recap": {
+                    "onDutyToday": round(duty_today, 1),
+                    "rolling7DaysTotal": round(rolling_7, 1),
+                    "availableTomorrow": round(available_tomorrow, 1)
+                }
+            }
         })
-
-        remaining_driving = round(remaining_driving - driving_today, 1)
-        remaining_cycle = round(remaining_cycle - (driving_today + on_duty_today), 1)
+        
         day_counter += 1
 
+    total_driving_required = t1 + t2
     cycle_status = "Within available cycle hours"
-    if total_restart_hours > 0:
-        cycle_status = f"Cycle exceeded. Requires {int(total_restart_hours)}h of restart rest."
+    if any(d["type"] == "RESTART" for d in daily_schedule):
+        cycle_status = "Cycle limit reached. Includes 34-hour restart."
 
     return {
         "dailyDrivingLimit": DAILY_DRIVING_LIMIT,
         "dailyDutyLimit": DAILY_DUTY_LIMIT,
-        "totalDrivingRequired": round(total_driving_hours, 1),
+        "totalDrivingRequired": round(total_driving_required, 1),
         "estimatedDrivingDays": len(daily_schedule),
-        "requiredBreaks": total_breaks_taken,
+        "requiredBreaks": sum(1 for d in daily_schedule if d["breakHours"] > 0),
         "availableCycleHours": round(max(0.0, CYCLE_LIMIT - initial_cycle_used), 1),
         "cycleStatus": cycle_status,
         "dailySchedule": daily_schedule
@@ -337,7 +540,6 @@ def update_driver_profile(request):
     profile.fuel_price_preset = float(request.data.get("fuelPricePreset", profile.fuel_price_preset))
     profile.save()
     
-    # Also update user first name
     name = request.data.get("name")
     if name is not None:
         request.user.first_name = name
@@ -362,8 +564,6 @@ def update_driver_profile(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_trips(request):
-    trips = Trip.objects.filter(driver=request.user.profile).order_name_by("-created_at") if hasattr(request.user, 'profile') else []
-    # Fallback to prevent order_name_by typo, standard order_by
     trips = Trip.objects.filter(driver=request.user.profile).order_by("-created_at")
     data = []
     for trip in trips:
@@ -431,7 +631,6 @@ def create_trip(request):
         if cycle_used < 0 or cycle_used > 70:
             return Response({"error": "Cycle hours must be between 0 and 70"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Location lookup
         current_coords = get_coordinates(current_location)
         if not current_coords:
             return Response({"error": f"Could not find location: {current_location}"}, status=status.HTTP_400_BAD_REQUEST)
@@ -444,21 +643,24 @@ def create_trip(request):
         if not dropoff_coords:
             return Response({"error": f"Could not find location: {dropoff_location}"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Route Calculation
         route1 = get_route(current_coords, pickup_coords)
         route2 = get_route(pickup_coords, dropoff_coords)
 
         if not route1 or not route2:
-            return Response({"error": "Could not calculate route. Ensure endpoints are reachable and valid."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Could not calculate route. Ensure locations are reachable."}, status=status.HTTP_400_BAD_REQUEST)
 
         total_distance = route1["distance_miles"] + route2["distance_miles"]
         total_duration = route1["duration_hours"] + route2["duration_hours"]
 
-        # HOS Calculation
-        hos_data = calculate_hos(total_duration, cycle_used)
+        # Advanced HOS simulation incorporating 1h stops & 1000mi fueling limit
+        hos_data = calculate_hos_advanced(
+            current_location, pickup_location, dropoff_location,
+            route1["distance_miles"], route1["duration_hours"],
+            route2["distance_miles"], route2["duration_hours"],
+            cycle_used
+        )
 
-        # Fuel and Cost metrics
-        # Default or driver-specific settings
+        # Fuel and costs logic
         mpg = 6.5
         fuel_price = 4.00
         if request.user.is_authenticated:
@@ -472,7 +674,6 @@ def create_trip(request):
         fuel_required = total_distance / mpg
         fuel_cost = fuel_required * fuel_price
         
-        # Operating costs: Driver ($0.65/mile), Tolls/Misc ($0.15/mile), Maintenance ($0.10/mile)
         driver_cost = total_distance * 0.65
         tolls_misc = total_distance * 0.15
         maintenance_cost = total_distance * 0.10
@@ -500,7 +701,6 @@ def create_trip(request):
             "hos": hos_data
         }
 
-        # Save to DB if authenticated and requested
         if request.user.is_authenticated and save_trip:
             Trip.objects.create(
                 driver=request.user.profile,
@@ -538,7 +738,6 @@ def ai_assistant_query(request):
     if not message:
         return Response({"error": "Message is required"}, status=status.HTTP_400_BAD_REQUEST)
         
-    # Standard responses if no trip context is available
     if not trip_data:
         if "hello" in message or "hi" in message:
             reply = "Hello! I am your AI compliance assistant. Please plan a trip first so I can analyze your logs, or ask general questions about ELD & HOS rules!"
@@ -548,7 +747,6 @@ def ai_assistant_query(request):
             reply = "I'm ready to assist you. To provide custom recommendations, please enter details and calculate a trip first!"
         return Response({"reply": reply})
 
-    # Trip details are present
     dist = trip_data.get("totalDistanceMiles", 0)
     hours = trip_data.get("totalDrivingHours", 0)
     cycle_used = trip_data.get("cycleUsed", 0)
@@ -556,7 +754,6 @@ def ai_assistant_query(request):
     hos = trip_data.get("hos", {})
     schedule = hos.get("dailySchedule", [])
     
-    # Analyze if restart was scheduled
     restart_days = [d for d in schedule if d.get("type") == "RESTART"]
     requires_restart = len(restart_days) > 0
     driving_days = hos.get("estimatedDrivingDays", 1)
@@ -585,7 +782,6 @@ def ai_assistant_query(request):
         reply = f"This trip spans a total of {driving_days} calendar days. It requires {hours} hours of active driving to cover the {dist} miles."
         
     else:
-        # Default smart response summarizing the route
         status_msg = "requires a 34-hour restart" if requires_restart else "can be completed without any restart"
         reply = (
             f"I've analyzed your trip from {trip_data.get('currentLocation')} to {trip_data.get('dropoffLocation')}. "

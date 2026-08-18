@@ -46,7 +46,7 @@ export default function ELDLog({ dayLog }) {
   }
 
   return (
-    <div className="eld-chart-card">
+    <div className="eld-chart-card" style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h4 style={{ color: "#f9fafb" }}>Daily ELD Log Grid - Day {dayLog.day}</h4>
         <span style={{ fontSize: "12px", color: "#9ca3af" }}>
@@ -102,7 +102,7 @@ export default function ELDLog({ dayLog }) {
       </div>
       
       {/* Hour markers */}
-      <div className="eld-hour-labels">
+      <div className="eld-hour-labels" style={{ marginTop: "-10px" }}>
         <span>M</span>
         <span>1</span>
         <span>2</span>
@@ -128,6 +128,48 @@ export default function ELDLog({ dayLog }) {
         <span>10</span>
         <span>11</span>
         <span>M</span>
+      </div>
+
+      {/* Recap and Remarks columns */}
+      <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: "20px", marginTop: "10px", borderTop: "1px solid var(--border-color)", paddingTop: "15px" }}>
+        {/* Left Column: Remarks */}
+        <div>
+          <h5 style={{ color: "var(--text-primary)", marginBottom: "8px", fontSize: "14px" }}>Remarks (Duty Status Changes)</h5>
+          {dayLog.eldLog.remarks && dayLog.eldLog.remarks.length > 0 ? (
+            <ul style={{ listStyle: "none", paddingLeft: 0, maxHeight: "150px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "6px" }}>
+              {dayLog.eldLog.remarks.map((rem, idx) => (
+                <li key={idx} style={{ fontSize: "12px", color: "var(--text-secondary)", borderLeft: "2px solid var(--color-primary)", paddingLeft: "8px" }}>
+                  {rem}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p style={{ fontSize: "12px", color: "var(--text-muted)" }}>No duty changes logged.</p>
+          )}
+        </div>
+        
+        {/* Right Column: Recap */}
+        {dayLog.eldLog.recap && (
+          <div>
+            <h5 style={{ color: "var(--text-primary)", marginBottom: "8px", fontSize: "14px" }}>HOS 70h/8-Day Cycle Recap</h5>
+            <table style={{ width: "100%", fontSize: "12px", borderCollapse: "collapse", border: "1px solid var(--border-color)" }}>
+              <tbody>
+                <tr style={{ borderBottom: "1px solid var(--border-color)" }}>
+                  <td style={{ padding: "6px 8px", color: "var(--text-secondary)", background: "var(--bg-tertiary)" }}>On Duty Today:</td>
+                  <td style={{ padding: "6px 8px", fontWeight: "600", textAlign: "right", background: "var(--bg-tertiary)" }}>{dayLog.eldLog.recap.onDutyToday} hrs</td>
+                </tr>
+                <tr style={{ borderBottom: "1px solid var(--border-color)" }}>
+                  <td style={{ padding: "6px 8px", color: "var(--text-secondary)" }}>Duty Last 7 Days (A):</td>
+                  <td style={{ padding: "6px 8px", fontWeight: "600", textAlign: "right" }}>{dayLog.eldLog.recap.rolling7DaysTotal} hrs</td>
+                </tr>
+                <tr>
+                  <td style={{ padding: "6px 8px", color: "var(--text-secondary)", background: "var(--bg-tertiary)" }}>Available Tomorrow (70 - A):</td>
+                  <td style={{ padding: "6px 8px", fontWeight: "700", color: "var(--color-success)", textAlign: "right", background: "var(--bg-tertiary)" }}>{dayLog.eldLog.recap.availableTomorrow} hrs</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
