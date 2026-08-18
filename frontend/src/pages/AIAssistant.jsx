@@ -1,5 +1,9 @@
 import React, { useState, useRef, useEffect } from "react";
 
+const API_BASE_URL = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+  ? "http://127.0.0.1:8000"
+  : "https://truck-eld-planner.onrender.com";
+
 export default function AIAssistant({ currentTrip }) {
   const [messages, setMessages] = useState([
     {
@@ -25,7 +29,7 @@ export default function AIAssistant({ currentTrip }) {
     setSending(true);
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/api/ai/", {
+      const response = await fetch(`${API_BASE_URL}/api/ai/`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -1,5 +1,9 @@
 import React, { useState } from "react";
 
+const API_BASE_URL = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+  ? "http://127.0.0.1:8000"
+  : "https://truck-eld-planner.onrender.com";
+
 export default function Profile({ profile, onProfileUpdated }) {
   const [formData, setFormData] = useState({
     name: profile?.name || "",
@@ -30,7 +34,7 @@ export default function Profile({ profile, onProfileUpdated }) {
     setError(null);
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/api/profile/", {
+      const response = await fetch(`${API_BASE_URL}/api/profile/`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",

@@ -2,6 +2,10 @@ import React, { useState } from "react";
 import TripMap from "../components/TripMap";
 import ELDLog from "../components/ELDLog";
 
+const API_BASE_URL = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+  ? "http://127.0.0.1:8000"
+  : "https://truck-eld-planner.onrender.com";
+
 export default function TripPlanner({ profile, onTripGenerated }) {
   const [trip, setTrip] = useState({
     currentLocation: "",
@@ -43,7 +47,7 @@ export default function TripPlanner({ profile, onTripGenerated }) {
     setResult(null);
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/api/trip/", {
+      const response = await fetch(`${API_BASE_URL}/api/trip/`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

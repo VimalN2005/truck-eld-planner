@@ -8,6 +8,10 @@ import TripHistory from "./pages/TripHistory";
 import Profile from "./pages/Profile";
 import AIAssistant from "./pages/AIAssistant";
 
+const API_BASE_URL = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+  ? "http://127.0.0.1:8000"
+  : "https://truck-eld-planner.onrender.com";
+
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState(null);
@@ -35,7 +39,7 @@ function App() {
 
   const checkAuth = async () => {
     try {
-      const response = await fetch("http://127.0.0.1:8000/api/user/");
+      const response = await fetch(`${API_BASE_URL}/api/user/`);
       const data = await response.json();
       if (data.isAuthenticated) {
         setIsAuthenticated(true);
@@ -53,7 +57,7 @@ function App() {
 
   const fetchHistory = async () => {
     try {
-      const response = await fetch("http://127.0.0.1:8000/api/trips/");
+      const response = await fetch(`${API_BASE_URL}/api/trips/`);
       if (response.ok) {
         const data = await response.json();
         setTrips(data);
@@ -77,7 +81,7 @@ function App() {
 
     const endpoint = authMode === "login" ? "login" : "register";
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/${endpoint}/`, {
+      const response = await fetch(`${API_BASE_URL}/api/${endpoint}/`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -110,7 +114,7 @@ function App() {
       });
 
       // Load trips history
-      const tripsResponse = await fetch("http://127.0.0.1:8000/api/trips/");
+      const tripsResponse = await fetch(`${API_BASE_URL}/api/trips/`);
       if (tripsResponse.ok) {
         const tripsData = await tripsResponse.json();
         setTrips(tripsData);
@@ -126,7 +130,7 @@ function App() {
 
   const handleLogout = async () => {
     try {
-      await fetch("http://127.0.0.1:8000/api/logout/", { method: "POST" });
+      await fetch(`${API_BASE_URL}/api/logout/`, { method: "POST" });
     } catch (err) {
       console.error("Logout issue:", err);
     }
@@ -148,7 +152,7 @@ function App() {
   const handleTripGenerated = () => {
     fetchHistory();
     // Fetch latest generated trip to save context for the AI query assistant
-    fetch("http://127.0.0.1:8000/api/trips/")
+    fetch(`${API_BASE_URL}/api/trips/`)
       .then((res) => res.json())
       .then((data) => {
         setTrips(data);
