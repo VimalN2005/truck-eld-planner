@@ -14,6 +14,8 @@ DEBUG = True
 ALLOWED_HOSTS = [
     'localhost',
     '127.0.0.1',
+    'truck-eld-planner.onrender.com',
+    '.onrender.com',
 ]
 
 
@@ -154,11 +156,7 @@ REST_FRAMEWORK = {
 # CORS
 # --------------------------------------------------
 
-CORS_ALLOWED_ORIGINS = [
-    'http://localhost:5174',
-    'http://127.0.0.1:5174',
-]
-
+CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 
  
