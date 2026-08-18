@@ -111,7 +111,7 @@ export default function Dashboard({ trips, profile, onNavigate }) {
         {/* HOS Compliance Sidebar */}
         <div className="dashboard-panel">
           <h3>Compliance Cheat Sheet</h3>
-          <ul style={{ list-style: "none", display: "flex", flexDirection: "column", gap: "15px" }}>
+          <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: "15px" }}>
             <li style={{ display: "flex", gap: "12px" }}>
               <span style={{ fontSize: "20px" }}>🚨</span>
               <div>
